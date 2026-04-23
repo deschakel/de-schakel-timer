@@ -146,11 +146,16 @@
 
 <script>
 const CIRCUMFERENCE = 603.2;
-let totalSec = 15 * 60;
-let remaining  = totalSec;
-let running    = false;
-let ticker     = null;
-let audioCtx   = null;
+let totalSec  = 15 * 60;
+let remaining = totalSec;
+let running   = false;
+let ticker    = null;
+let audioCtx  = null;
+
+// Real-clock tracking — immune to background tab throttling
+let startTime    = null;  // Date.now() when timer was started/resumed
+let startRemain  = null;  // remaining seconds at that moment
+let tickedSeconds = new Set(); // which seconds we already played a tick for
 
 function getCtx() {
   if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
@@ -191,11 +196,11 @@ function fmt(s) {
 }
 
 function render() {
-  const pct    = totalSec > 0 ? remaining / totalSec : 0;
-  const ring   = document.getElementById('progressRing');
-  const disp   = document.getElementById('display');
-  const label  = document.getElementById('timeLabel');
-  const emoji  = document.getElementById('clockEmoji');
+  const pct   = totalSec > 0 ? remaining / totalSec : 0;
+  const ring  = document.getElementById('progressRing');
+  const disp  = document.getElementById('display');
+  const label = document.getElementById('timeLabel');
+  const emoji = document.getElementById('clockEmoji');
 
   ring.style.strokeDashoffset = CIRCUMFERENCE * (1 - pct);
   disp.textContent = fmt(remaining);
@@ -217,6 +222,29 @@ function render() {
 
   const clocks = ['🕛','🕐','🕑','🕒','🕓','🕔','🕕','🕖','🕗','🕘','🕙','🕚'];
   emoji.textContent = clocks[Math.round((1 - pct) * 11)];
+}
+
+function tick() {
+  // Calculate true remaining time from the real wall clock
+  const elapsed = (Date.now() - startTime) / 1000;
+  remaining = Math.max(0, Math.round(startRemain - elapsed));
+
+  // Play tick sound once per second in the last 10 seconds
+  if (remaining <= 10 && remaining > 0 && !tickedSeconds.has(remaining)) {
+    tickedSeconds.add(remaining);
+    playTick();
+  }
+
+  render();
+
+  if (remaining <= 0) {
+    clearInterval(ticker); running = false;
+    document.getElementById('startBtn').textContent = '▶ Starten';
+    document.getElementById('startBtn').className = 'btn-start';
+    document.getElementById('clockEmoji').classList.remove('running');
+    document.getElementById('doneOverlay').classList.add('show');
+    playAlarm();
+  }
 }
 
 function setPreset(min) {
@@ -251,24 +279,14 @@ function toggleTimer() {
   }
   if (remaining <= 0) return;
   running = true;
+  startTime   = Date.now();
+  startRemain = remaining;
+  tickedSeconds.clear();
   document.getElementById('startBtn').textContent = '⏸ Pauzeren';
   document.getElementById('startBtn').className = 'btn-start';
   document.getElementById('statusBar').textContent = 'Timer loopt! 🚀';
   document.getElementById('clockEmoji').classList.add('running');
-
-  ticker = setInterval(() => {
-    remaining--;
-    if (remaining <= 10 && remaining > 0) playTick();
-    render();
-    if (remaining <= 0) {
-      clearInterval(ticker); running = false;
-      document.getElementById('startBtn').textContent = '▶ Starten';
-      document.getElementById('startBtn').className = 'btn-start';
-      document.getElementById('clockEmoji').classList.remove('running');
-      document.getElementById('doneOverlay').classList.add('show');
-      playAlarm();
-    }
-  }, 1000);
+  ticker = setInterval(tick, 500); // poll every 500ms — stays accurate even if throttled
 }
 
 function resetTimer() {
